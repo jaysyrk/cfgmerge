@@ -26,12 +26,12 @@ class Lines(list):
 
 # ---------------------------------------------------------------- detection
 _EXT = {
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+    ".json": "json", ".jsonc": "json", ".json5": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
     ".ini": "ini", ".cfg": "ini", ".properties": "properties", ".env": "env",
     ".xml": "xml", ".pom": "xml", ".csproj": "xml", ".plist": "xml",
 }
 _NAMES = {
-    ".gitignore": "text", "requirements.txt": "text", ".dockerignore": "text",
+    ".gitignore": "text", ".eslintrc": "json", ".babelrc": "json", "requirements.txt": "text", ".dockerignore": "text",
     "pipfile": "toml", "cargo.lock": "toml", ".editorconfig": "ini", ".gitconfig": "ini",
 }
 
@@ -73,7 +73,11 @@ def parse(fmt: str, text: str):
 
 
 def _parse_json(text):
-    return json.loads(text, object_pairs_hook=_no_dupes)
+    try:
+        return json.loads(text, object_pairs_hook=_no_dupes)
+    except json.JSONDecodeError:
+        from . import jsonc            # comments / trailing commas (tsconfig, eslintrc, VS Code)
+        return jsonc.loads(text)
 
 
 def _no_dupes(pairs):
@@ -359,7 +363,15 @@ def _same(a, b):
 def render(fmt: str, merged, ours_text: str, fresh: bool = False) -> str:
     """Merged data -> text. Preferred: patch the ours document; `fresh=True` re-emits from scratch."""
     if fmt == "json":
-        return dump_json(merged, _json_style(ours_text))
+        style = _json_style(ours_text)
+        if not fresh and ours_text.strip():
+            from . import jsonc
+            if not jsonc.is_strict_json(ours_text):          # keep comments / trailing commas
+                try:
+                    return jsonc.patch(ours_text, merged, style)
+                except jsonc.JsoncError:
+                    pass
+        return dump_json(merged, style)
     if fmt == "yaml":
         return _render_yaml(merged, ours_text, fresh)
     if fmt == "toml":

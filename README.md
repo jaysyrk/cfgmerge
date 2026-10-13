@@ -14,7 +14,7 @@ git merge feature        # with cfgmerge installed: concurrent edits merge, real
 
 ## Formats
 JSON · YAML (incl. multi-document, anchors via expansion) · TOML · INI · `.properties` · `.env` ·
-XML (pom.xml, web.xml…) · plain-text lists (`requirements.txt`, `.gitignore`). Anything that
+XML (pom.xml, web.xml…) · JSON with comments / trailing commas (tsconfig, eslintrc; comments preserved) · plain-text lists (`requirements.txt`, `.gitignore`). Anything that
 fails to parse falls back to a plain `git merge-file` merge, so it is never worse than git on
 unparseable input.
 
@@ -25,6 +25,8 @@ cfgmerge merge BASE OURS THEIRS -o MERGED     # exit 0 clean, 1 conflicts (marke
 cfgmerge diff old.yaml new.yaml               # semantic diff, ignores formatting/order noise
 cfgmerge install                              # register as git merge driver in this repo (no sudo)
 cfgmerge learn values.yaml -o .cfgmerge.json  # learn identity keys / sort order / co-changing blocks
+cfgmerge learn values.yaml --affinity -o .cfgmerge.json   # + how past merges resolved conflicts here
+cfgmerge merge B O T --policy .cfgmerge.json --auto-affinity  # auto-apply only at >=95% over >=5 merges
 ```
 `install` only edits `.git/config` and `.git/info/attributes` of the repo you run it in.
 Add `--committed` to write `.gitattributes` instead (team-wide), and set
@@ -49,9 +51,12 @@ JSON/YAML/TOML/INI/properties/XML). On **41 held-out repos never inspected durin
 | | git merge-file | cfgmerge |
 |---|---:|---:|
 | auto-resolved (first contact, 2,887 cases) | 71.1% | **80.6%** (+9.5 pts, 95% CI +8.3 to +10.6) |
-| silently wrong | 0.0% (1 invalid file) | 0.1% before fixes, 0.0% after |
+| silently wrong | 0.0% (1 invalid file) | 0.1% on first contact (2 cases, fixed), 0.0% since |
 
 cfgmerge resolved 283 merges where git conflicted and regressed on 10 where git succeeded.
+Opt-in *conflict affinity* (learn how past merges of a path were resolved): 312 of 313 confident
+predictions correct under a strict temporal split, 25% coverage, concentrated in repos with a stable
+merge-forward convention.
 Full tables, protocol, and the caveats (override cases, learned policy had no measurable effect)
 are in [`docs/RESULTS.md`](docs/RESULTS.md). Reproduce: `data/clone.sh`, then
 `python -m cfgmerge.bench.mine && python -m cfgmerge.bench.score`.
@@ -61,7 +66,9 @@ are in [`docs/RESULTS.md`](docs/RESULTS.md). Reproduce: `data/clone.sh`, then
   flows that keep their own dependency versions), any correct three-way merge, git included,
   would take the other side. cfgmerge reports those as "override" in the benchmark; use the
   conflict-affinity features or review the diff.
-- Templated files (Helm/Jinja, `{{ }}`) are only safe where they still parse; otherwise textual fallback.
+- Templated files (Helm/Jinja, `{{ }}`) are only handled where they still parse; otherwise textual fallback.
+- When both sides rewrite most of a file in the same places, cfgmerge defers to a plain textual merge
+  (a tree merge of two independent rewrites isn't trustworthy).
 - YAML anchors/aliases are expanded for the merge; the result is verified but anchors you edit
   through may be re-emitted expanded.
 - No schema awareness (e.g. Kubernetes defaults); identity is inferred from the data.

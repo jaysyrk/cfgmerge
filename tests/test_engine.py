@@ -68,3 +68,19 @@ def test_k8s_multidoc():
     theirs = b.rstrip("\n") + "\n" + "---\nkind: C\nmetadata:\n  name: c\n"
     o = merge_texts(b, ours, theirs, "m.yaml")
     assert o.clean and "n: 2" in o.text and "name: c" in o.text and o.text.count("---") >= 2
+
+
+def test_big_rewrite_defers_to_textual_merge():
+    base = "".join(f"k{i}: {i}\n" for i in range(30))
+    ours = "".join(f"k{i}: {i + 1000}\n" for i in range(30))        # rewrote everything
+    theirs = "".join(f"k{i}: {i + 2000}\n" for i in range(30))      # ... differently, same keys
+    o = merge_texts(base, ours, theirs, "x.yaml")
+    assert o.strategy == "textual" and not o.clean
+
+
+def test_normal_sized_edits_are_not_treated_as_rewrite():
+    base = "".join(f"k{i}: {i}\n" for i in range(60))
+    ours = base.replace("k3: 3", "k3: 30")
+    theirs = base.replace("k4: 4", "k4: 40")
+    o = merge_texts(base, ours, theirs, "x.yaml")
+    assert o.clean and o.strategy == "structured"

@@ -59,3 +59,22 @@ def test_clean_json_output_parses_and_matches(b, o, t):
 def test_json_render_roundtrip(d):
     text = F.render("json", d, json.dumps(d, indent=4) + "\n")
     assert same(F.parse("json", text), d)
+
+
+def _with_comments(d):
+    out = []
+    for line in json.dumps(d, indent=2).split("\n"):
+        out.append(line)
+        if line.rstrip().endswith(("{", "[", ",")):
+            out.append(" " * (len(line) - len(line.lstrip())) + "  // note")
+    return "\n".join(out) + "\n"
+
+
+@S
+@given(docs, docs)
+def test_jsonc_patch_always_reaches_target_and_keeps_comments(base, merged):
+    from cfgmerge import jsonc
+    text = _with_comments(base)
+    assert same(F.parse("json", text), base)
+    out = jsonc.patch(text, merged, F._json_style(text))
+    assert same(F.parse("json", out), merged)

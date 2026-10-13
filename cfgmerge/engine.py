@@ -15,6 +15,10 @@ from .core_types import MISSING, same
 from .merge import ConflictRef, merge
 from .policy import EMPTY, Policy
 
+REWRITE_MIN_CHANGES = 15       # leaf facts changed on each side
+REWRITE_FRACTION = 0.5         # ... and at least this share of the base
+REWRITE_OVERLAP = 0.5          # ... of which this share is the same facts touched by both
+
 PH = "<<<CFGMERGE:{}>>>"
 _PH_RE = re.compile(r"<<<CFGMERGE:(\d+)>>>")
 
@@ -56,6 +60,35 @@ def _looks_list_like(lines):
         return True
     simple = sum(1 for l in body if l.lstrip().startswith("#") or len(l.split()) <= 2)
     return simple / len(body) >= 0.8
+
+
+def _facts(x, path=()):
+    if isinstance(x, dict):
+        for k, v in x.items():
+            yield from _facts(v, path + (str(k),))
+    elif isinstance(x, list):
+        if not x:
+            yield (path + ("[]",), "[]")
+        for v in x:
+            yield from _facts(v, path + ("[]",))
+    else:
+        yield (path, repr(x))
+
+
+def is_big_rewrite(base, ours, theirs) -> bool:
+    """Both sides rewrote most of the file, largely the same parts of it. A tree merge of two
+    independent rewrites would stitch them together; that is not trustworthy, defer to text."""
+    if base is MISSING or base is None:
+        return False
+    fb, fo, ft = set(_facts(base)), set(_facts(ours)), set(_facts(theirs))
+    if not fb:
+        return False
+    co, ct = fo ^ fb, ft ^ fb
+    if min(len(co), len(ct)) < REWRITE_MIN_CHANGES:
+        return False
+    if min(len(co), len(ct)) / len(fb) < REWRITE_FRACTION:
+        return False
+    return len(co & ct) / min(len(co), len(ct)) >= REWRITE_OVERLAP
 
 
 def _materialize(x):
@@ -144,6 +177,10 @@ def merge_texts(base: str, ours: str, theirs: str, path: str = "", fmt: str = No
         return Output(theirs, True, fmt, "fast")
     if pb is not MISSING and same(pt, pb):
         return Output(ours, True, fmt, "fast")
+    if pb is not MISSING and is_big_rewrite(pb, po, pt):
+        txt, ok = _textual(base, ours, theirs)
+        if txt is not None:
+            return Output(txt, ok, fmt, "textual")
     text_union = fmt == "text" and _looks_list_like(list(po) + list(pt))
     res = merge(pb, po, pt, policy, text_union=text_union, auto_affinity=auto_affinity)
     data = _materialize(res.merged)
