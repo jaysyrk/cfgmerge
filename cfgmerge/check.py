@@ -73,7 +73,8 @@ def check_text(path: str, text: str):
             if fmt == "yaml" and T.is_templated(text):
                 return out                         # Helm/Jinja: not YAML on its own, by design
             if not out:                            # markers already explain a parse failure
-                out.append(Finding("error", "parse-error", path, str(e)))
+                m = re.search(r"line (\d+)", str(e))
+                out.append(Finding("error", "parse-error", path, str(e), int(m.group(1)) if m else 0))
     return out
 
 

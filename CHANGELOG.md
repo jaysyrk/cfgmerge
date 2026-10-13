@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+- **pre-commit hooks** (`.pre-commit-hooks.yaml`): `cfgmerge-check`, `cfgmerge-install-driver`
+  (post-checkout/post-merge/post-rewrite: git's driver config is not versioned), `cfgmerge-audit-merge`
+  (pre-merge-commit).
+- **GitHub Action** (`action.yml`): `check`, `diff` (semantic summary), `verify-merge` (audits the PR's
+  textual merge for silently lost/broken config), with inline annotations and a job summary.
+- New commands: `check`, `audit`, `summary`, `ci`; `install --quiet`.
+- Non-YAML template files (`*.tpl`, `*.tmpl`, `*.gotmpl`, `*.j2`) go git-first with the guarded structural
+  layer. Measured on 282 real cases: identical to git (92.2%), no regressions; no safe gain exists there.
+- JSON parse errors report the real line/column.
+- CI: pytest on Python 3.11-3.13 plus the Action run against the repo itself.
+
 ## 0.3.0
 - Templated YAML (Helm / Go templates / Jinja, `*.yaml.j2`): template directive lines act as anchors,
   YAML between them is merged structurally with `{{ }}` expressions hidden behind placeholders.

@@ -55,6 +55,11 @@ def _textual(base, ours, theirs):
     return None, not res.conflicts
 
 
+def _is_template_path(path: str) -> bool:
+    b = os.path.basename(path).lower()
+    return b.endswith((".tpl", ".tmpl", ".gotmpl", ".j2", ".jinja", ".jinja2", ".template"))
+
+
 def _looks_list_like(lines):
     body = [l for l in lines if l.strip()]
     if not body:
@@ -160,6 +165,17 @@ def merge_texts(base: str, ours: str, theirs: str, path: str = "", fmt: str = No
                 policy: Policy = EMPTY, base_missing: bool = False, auto_affinity: bool = False,
                 _allow_template: bool = True) -> Output:
     fmt = fmt or F.detect(path, ours or theirs or base)
+    # ---- template-suffixed non-config files (_helpers.tpl, *.tmpl, *.gotmpl, *.j2 of unknown format):
+    # git first; the structural layer only gets a say where git conflicts (see template.py)
+    if fmt == "text" and _is_template_path(path) and T.is_templated(base + ours + theirs) \
+            and ours != theirs and ours != base and theirs != base and not base_missing:
+        txt, ok = _textual(base, ours, theirs)
+        if txt is not None and not ok:
+            res = T.merge_templated(base, ours, theirs, merge_texts)
+            if res is not None and res[1]:
+                return Output(res[0], True, fmt, "template")
+        if txt is not None:
+            return Output(txt, ok, fmt, "textual")
     # ---- textual fast paths: never re-render what nobody changed
     if ours == theirs:
         return Output(ours, True, fmt, "fast")
