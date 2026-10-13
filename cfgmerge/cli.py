@@ -86,8 +86,89 @@ def cmd_install(a):
         if existing and not existing.endswith("\n"):
             f.write("\n")
         f.write("\n".join(new) + ("\n" if new else ""))
-    print(f"installed merge driver '{DRIVER_NAME}' in {repo} (attributes: {attrs})")
+    if not a.quiet:
+        print(f"installed merge driver '{DRIVER_NAME}' in {repo} (attributes: {attrs})")
     return 0
+
+
+def _print_findings(findings, out=sys.stderr):
+    for f in findings:
+        loc = f"{f.path}:{f.line}" if f.line else f.path
+        out.write(f"{loc}: {f.severity}: [{f.kind}] {f.message}\n")
+        for d in f.details:
+            out.write(f"    - {d}\n")
+
+
+def _staged_files(repo="."):
+    r = subprocess.run(["git", "-C", repo, "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+                       capture_output=True, text=True)
+    return [p for p in r.stdout.split("\n") if p]
+
+
+def cmd_check(a):
+    from .check import check_files
+    files = a.files or (_staged_files() if a.staged else [])
+    found = check_files(files)
+    _print_findings(found)
+    if a.verbose or not found:
+        sys.stderr.write(f"cfgmerge check: {len(files)} file(s), {len(found)} problem(s)\n")
+    return 1 if any(f.severity == "error" for f in found) else 0
+
+
+def cmd_audit(a):
+    from .check import audit_index, audit_merge_commit
+    found = audit_index() if a.index else audit_merge_commit(".", a.rev, a.paths or None)
+    if found is None:
+        if a.verbose:
+            sys.stderr.write("cfgmerge audit: not a two-parent merge, nothing to audit\n")
+        return 0
+    _print_findings(found)
+    if not found and a.verbose:
+        sys.stderr.write("cfgmerge audit: merge result keeps everything both histories agree on\n")
+    bad = any(f.severity == "error" for f in found)
+    return 1 if (bad and not a.warn) else 0
+
+
+def cmd_summary(a):
+    from .check import semantic_summary
+    sys.stdout.write(semantic_summary(".", a.base, a.head, a.paths or None))
+    return 0
+
+
+def cmd_ci(a):
+    """Everything the GitHub Action does, in one place (also usable from any CI)."""
+    from .check import audit_merge_commit, check_files, is_config_path, matches, semantic_summary
+    report, findings = [], []
+    base = a.base
+    names = [n for n in subprocess.run(["git", "diff", "--name-only", f"{base}...{a.head}"],
+                                       capture_output=True, text=True).stdout.split("\n") if n]
+    cfg = [n for n in names if is_config_path(n) and matches(n, a.paths or None) and os.path.isfile(n)]
+    if a.mode in ("check", "all"):
+        found = check_files(cfg)
+        findings += found
+        report.append(f"### cfgmerge check\n{len(cfg)} config file(s) checked, **{len(found)} problem(s)**\n")
+    if a.mode in ("diff", "all"):
+        report.append(semantic_summary(".", base, a.head, a.paths or None))
+    if a.mode in ("verify-merge", "all"):
+        res = audit_merge_commit(".", a.head, a.paths or None)
+        if res is None:
+            report.append("### cfgmerge verify-merge\n_HEAD is not a merge commit; nothing to verify._\n")
+        else:
+            findings += res
+            report.append(f"### cfgmerge verify-merge\n**{len(res)} problem(s)** in the textual merge of this change\n")
+    for f in findings:
+        loc = f"file={f.path}" + (f",line={f.line}" if f.line else "")
+        msg = f.message + ("; " + "; ".join(f.details) if f.details else "")
+        print(f"::{'error' if f.severity == 'error' else 'warning'} {loc},title=cfgmerge {f.kind}::{msg}")
+    text = "\n".join(report)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+    else:
+        sys.stdout.write(text + "\n")
+    bad = any(f.severity == "error" for f in findings)
+    return 1 if (bad and a.fail_on == "error") else 0
 
 
 def cmd_learn(a):
@@ -122,8 +203,27 @@ def main(argv=None):
     i = sub.add_parser("install", help="register cfgmerge as git merge driver in a repo (no sudo)")
     i.add_argument("--repo", default="."), i.add_argument("--exe")
     i.add_argument("--committed", action="store_true", help="write .gitattributes instead of .git/info/attributes")
+    i.add_argument("--quiet", action="store_true")
     i.add_argument("patterns", nargs="*")
     i.set_defaults(fn=cmd_install)
+    c = sub.add_parser("check", help="parse + leftover-conflict-marker check (pre-commit friendly)")
+    c.add_argument("files", nargs="*"), c.add_argument("--staged", action="store_true")
+    c.add_argument("-v", "--verbose", action="store_true")
+    c.set_defaults(fn=cmd_check)
+    u = sub.add_parser("audit", help="did a merge silently lose or break config content?")
+    u.add_argument("rev", nargs="?", default="HEAD")
+    u.add_argument("--index", action="store_true", help="audit the staged result of an in-progress merge")
+    u.add_argument("--warn", action="store_true", help="report but never fail")
+    u.add_argument("--paths", nargs="*"), u.add_argument("-v", "--verbose", action="store_true")
+    u.set_defaults(fn=cmd_audit)
+    sm = sub.add_parser("summary", help="markdown semantic diff of config files between two revisions")
+    sm.add_argument("base"), sm.add_argument("head", nargs="?", default="HEAD"), sm.add_argument("--paths", nargs="*")
+    sm.set_defaults(fn=cmd_summary)
+    ci = sub.add_parser("ci", help="check / semantic diff / verify-merge with GitHub annotations")
+    ci.add_argument("--mode", choices=["check", "diff", "verify-merge", "all"], default="all")
+    ci.add_argument("--base", required=True), ci.add_argument("--head", default="HEAD")
+    ci.add_argument("--paths", nargs="*"), ci.add_argument("--fail-on", choices=["error", "never"], default="error")
+    ci.set_defaults(fn=cmd_ci)
     l = sub.add_parser("learn", help="learn a merge policy from a file's git history")
     l.add_argument("file"), l.add_argument("--repo", default="."), l.add_argument("-o", "--output")
     l.add_argument("--max-versions", type=int, default=60)

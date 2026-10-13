@@ -1,0 +1,52 @@
+name: cfgmerge
+description: >
+  Semantic checks for config files in pull requests: validity and leftover conflict markers,
+  a formatting-blind semantic diff in the job summary, and verification that the textual merge of
+  the PR did not silently lose or break configuration.
+author: jaysyrk
+branding:
+  icon: git-merge
+  color: blue
+inputs:
+  mode:
+    description: "check | diff | verify-merge | all"
+    default: all
+  paths:
+    description: "Space-separated globs limiting which config files are examined (default: all)"
+    default: ""
+  base:
+    description: "Base ref to compare against (default: origin/<PR base branch>, or HEAD~1 on push)"
+    default: ""
+  fail-on:
+    description: "error | never"
+    default: error
+runs:
+  using: composite
+  steps:
+    - name: Install cfgmerge
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/cfgmerge-venv"
+        "$RUNNER_TEMP/cfgmerge-venv/bin/pip" -q install "$GITHUB_ACTION_PATH"
+    - name: Run cfgmerge
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        set -euo pipefail
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --unshallow origin || true
+        fi
+        base="$INPUT_BASE"
+        if [ -z "$base" ] && [ -n "$BASE_REF" ]; then
+          git fetch --no-tags origin "$BASE_REF" || true
+          base="origin/$BASE_REF"
+        fi
+        if [ -z "$base" ]; then base="HEAD~1"; fi
+        # shellcheck disable=SC2086
+        "$RUNNER_TEMP/cfgmerge-venv/bin/cfgmerge" ci --mode "$INPUT_MODE" --base "$base" --head HEAD \
+          ${INPUT_PATHS:+--paths $INPUT_PATHS} --fail-on "$INPUT_FAIL_ON"

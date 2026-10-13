@@ -1,0 +1,24 @@
+- id: cfgmerge-check
+  name: cfgmerge check (config parses, no leftover conflict markers)
+  description: Fails on config files that do not parse, or that still contain merge conflict markers.
+  entry: cfgmerge check
+  language: python
+  files: '\.(json|jsonc|json5|ya?ml|toml|ini|cfg|properties|env|xml)$'
+
+- id: cfgmerge-install-driver
+  name: register cfgmerge as git merge driver
+  description: Keeps the semantic merge driver configured in every clone (git config is not versioned).
+  entry: cfgmerge install --quiet
+  language: python
+  always_run: true
+  pass_filenames: false
+  stages: [post-checkout, post-merge, post-rewrite]
+
+- id: cfgmerge-audit-merge
+  name: cfgmerge audit merge (no silently lost or broken config)
+  description: Before a merge commit is created, verifies the merged config files kept everything both sides agree on.
+  entry: cfgmerge audit --index -v
+  language: python
+  always_run: true
+  pass_filenames: false
+  stages: [pre-merge-commit]
