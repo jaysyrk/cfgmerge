@@ -14,7 +14,7 @@ git merge feature        # with cfgmerge installed: concurrent edits merge, real
 
 ## Formats
 JSON · YAML (incl. multi-document, anchors via expansion) · TOML · INI · `.properties` · `.env` ·
-XML (pom.xml, web.xml…) · JSON with comments / trailing commas (tsconfig, eslintrc; comments preserved) · plain-text lists (`requirements.txt`, `.gitignore`). Anything that
+XML (pom.xml, web.xml…) · templated YAML (Helm/Go-template/Jinja, `*.yaml.j2`) · JSON with comments / trailing commas (tsconfig, eslintrc; comments preserved) · plain-text lists (`requirements.txt`, `.gitignore`). Anything that
 fails to parse falls back to a plain `git merge-file` merge, so it is never worse than git on
 unparseable input.
 
@@ -57,8 +57,8 @@ cfgmerge resolved 283 merges where git conflicted and regressed on 10 where git 
 Opt-in *conflict affinity* (learn how past merges of a path were resolved): 312 of 313 confident
 predictions correct under a strict temporal split, 25% coverage, concentrated in repos with a stable
 merge-forward convention.
-Full tables, protocol, and the caveats (override cases, learned policy had no measurable effect)
-are in [`docs/RESULTS.md`](docs/RESULTS.md). Reproduce: `data/clone.sh`, then
+Full tables are in [`docs/RESULTS.md`](docs/RESULTS.md); protocol, affinity evaluation and caveats
+(override cases, learned policy had no measurable effect) in [`docs/RESULTS_NOTES.md`](docs/RESULTS_NOTES.md). Reproduce: `data/clone.sh`, then
 `python -m cfgmerge.bench.mine && python -m cfgmerge.bench.score`.
 
 ## Limits (read these)
@@ -66,7 +66,10 @@ are in [`docs/RESULTS.md`](docs/RESULTS.md). Reproduce: `data/clone.sh`, then
   flows that keep their own dependency versions), any correct three-way merge, git included,
   would take the other side. cfgmerge reports those as "override" in the benchmark; use the
   conflict-affinity features or review the diff.
-- Templated files (Helm/Jinja, `{{ }}`) are only handled where they still parse; otherwise textual fallback.
+- **Templated YAML (Helm / Go templates / Jinja)**: git's line merge is already right on ~93% of these,
+  so it stays primary. A template-aware layer (directive lines as anchors, YAML merged between them,
+  accepted only if the result is exactly the ideal line-fact merge with balanced `if`/`end`) resolves
+  a few extra conflicts. Measured gain is small: +2 of 22 git conflicts, 0 regressions, on 299 real cases.
 - When both sides rewrite most of a file in the same places, cfgmerge defers to a plain textual merge
   (a tree merge of two independent rewrites isn't trustworthy).
 - YAML anchors/aliases are expanded for the merge; the result is verified but anchors you edit

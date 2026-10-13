@@ -84,3 +84,20 @@ def test_normal_sized_edits_are_not_treated_as_rewrite():
     theirs = base.replace("k4: 4", "k4: 40")
     o = merge_texts(base, ours, theirs, "x.yaml")
     assert o.clean and o.strategy == "structured"
+
+
+def test_items_inserted_from_theirs_keep_their_quoting_and_flow_style():
+    base = "items:\n  - name: a\n    v: \"1\"\n"
+    ours = base.replace('v: "1"', 'v: "9"')
+    theirs = base + '  - name: b\n    v: "2"\n    tags: ["x", "y"]\n'
+    o = merge_texts(base, ours, theirs, "x.yaml")
+    assert o.clean
+    assert 'v: "2"' in o.text and 'tags: ["x", "y"]' in o.text, o.text
+
+
+def test_anchored_theirs_nodes_do_not_create_duplicate_anchors():
+    base = "base: &b\n  x: 1\nuse:\n  <<: *b\n"
+    ours = base.replace("x: 1", "x: 2")
+    theirs = base + "extra: &e\n  y: 1\nmore:\n  <<: *e\n"
+    o = merge_texts(base, ours, theirs, "x.yaml")
+    assert o.clean and o.text.count("&e") <= 1

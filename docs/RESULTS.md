@@ -22,7 +22,7 @@ Truth = the merge a human actually committed. Categories: **exact** (tree equals
 | properties | 105 | 26.7% | 33.3% | 0.0% |
 | ini | 15 | 80.0% | 86.7% | 0.0% |
 
-## Held-out repos, current code (v0.2.0; no longer a clean test set)  (2888 cases, 36 repos)
+## Held-out repos, current code (not a clean test set any more)  (2888 cases, 36 repos)
 
 | tool | exact | explained | override | wrong | invalid | conflict | auto-resolved | silently-wrong |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -62,41 +62,31 @@ Truth = the merge a human actually committed. Categories: **exact** (tree equals
 | xml | 57 | 43.9% | 61.4% | 0.0% |
 | ini | 25 | 60.0% | 60.0% | 0.0% |
 
-## Conflict affinity (opt-in): does history predict how a conflict gets resolved?
+## Templated YAML (Helm / Go templates / Jinja) - files that are not valid YAML
 
-Strict temporal protocol over **all 64 repos**: a conflict is predicted only from *older* merges of the
-same file and path, and only when the policy would actually auto-apply (>= 5 older observations,
->= 95% agreeing, never "novel"). Thresholds were fixed before this run.
+These files were previously *invisible* to the benchmark (unparseable, so skipped). 299 real merge
+cases across 14 repos (grafana/helm-charts, istio, cert-manager, bitnami/charts, elastic, ...).
+Judging is textual: **exact** = equals the human's file; **reference** = same lines as the ideal
+line-fact merge; **broken** = unbalanced `if`/`end`.
 
 ```
-conflicts seen: 1266   auto-applicable predictions: 313   correct: 312   precision: 99.7%   coverage: 24.7%
-expressjs/express 110/110 - spring-boot 96/96 - spring-framework 57/57 - webpack 45/45 - prettier 4/4 - typescript-eslint 0/1
-(30 repos produced no confident prediction)
+templated, unparseable-as-YAML merge cases: 299   repos: 14
+                      exact  reference      wrong     broken   conflict  auto-ok%   bad%
+git merge-file          276          1          0          0         22     92.6%   0.0%
+cfgmerge                277          2          0          0         20     93.3%   0.0%
+
+git x cfgmerge: {('ok', 'ok'): 277, ('conflict', 'conflict'): 20, ('conflict', 'ok'): 2}
+strategies used: {'textual': 297, 'template': 2}
 ```
-Reproduce: `python -m cfgmerge.bench.affinity_eval`. Read it as: where a repo has a *stable merge-forward
-convention* (keep the target branch's value), affinity captures it almost perfectly; elsewhere it
-abstains. Predictions come from 6 repos, so the claim is "works where conventions exist", not "works everywhere".
 
-## How to read this honestly
+Design, and why it is modest: git's line merge is *already* right on 92.6% of these with zero
+wrong results, so git stays primary. The structural layer (`cfgmerge/template.py`) only runs where
+git conflicts, and its result is accepted only if it is exactly the ideal line-fact merge (nothing
+invented, duplicated or re-indented) with `if`/`end` blocks balanced. An earlier, more ambitious
+version made 15 wrong merges on this corpus (YAML re-rendering drifted quoting/indent and
+duplicated a key); the post-condition exists because of that. Net gain: **+2 of 22 git conflicts
+resolved, 0 regressions**. Templated files are a place where being never worse than git is the
+achievement, not a large improvement.
 
-**Method.** ~5,300 real merge commits from public repos (JSON, YAML, TOML, INI, properties, XML), each
-"base / ours / theirs / what the human committed". git's baseline is `git merge-file`.
-
-**Protocol.** 23 dev repos were used to find and fix bugs. 41 further repos were cloned afterwards and
-scored without being looked at (36 produced cases). The *first-contact* table is the unbiased
-number; the later tables are the same repos after fixing what they exposed, so they are not clean test sets.
-
-**Caveats that matter.**
-1. *Override.* In ~2-4% of cases cfgmerge auto-resolves the way any correct three-way merge would, but
-   the human deliberately did something else (typically a merge-forward that keeps the target branch's
-   own dependency versions). git conflicts on many of these, so a human at least looks. Affinity
-   (above) is the targeted remedy.
-2. *Learned policy.* Identity keys / sortedness / co-changing blocks learned from file history made
-   **no measurable difference** (71.4% vs 71.4% on the dev corpus): inferring identity from the three
-   versions already captures it.
-3. *Selection.* Cases are merge commits of configs changed on both sides. Squash-merge repos contribute
-   nothing; results describe merge-commit workflows.
-4. *Truth is a human, not an oracle.* "Wrong" and "override" separate disagreement with the human from
-   deviation from a reference fact-algebra merge; neither proves a merge is right for a running system.
-5. *Rewrites.* When both sides rewrite most of a file in largely the same places, cfgmerge defers to
-   plain textual merge rather than stitching two rewrites together (cost: ~0.1 pt of auto-resolution).
+---
+Affinity evaluation, protocol and caveats: see [RESULTS_NOTES.md](RESULTS_NOTES.md).

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cfgmerge"
-version = "0.2.0"
+version = "0.3.0"
 description = "Universal, schema-free, semantic three-way merge for config files (git merge driver)"
 readme = "README.md"
 license = { text = "MIT" }

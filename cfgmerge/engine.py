@@ -11,6 +11,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 from . import formats as F
+from . import template as T
 from .core_types import MISSING, same
 from .merge import ConflictRef, merge
 from .policy import EMPTY, Policy
@@ -156,7 +157,8 @@ def _apply_markers(fmt, text, conflicts):
 
 
 def merge_texts(base: str, ours: str, theirs: str, path: str = "", fmt: str = None,
-                policy: Policy = EMPTY, base_missing: bool = False, auto_affinity: bool = False) -> Output:
+                policy: Policy = EMPTY, base_missing: bool = False, auto_affinity: bool = False,
+                _allow_template: bool = True) -> Output:
     fmt = fmt or F.detect(path, ours or theirs or base)
     # ---- textual fast paths: never re-render what nobody changed
     if ours == theirs:
@@ -170,6 +172,14 @@ def merge_texts(base: str, ours: str, theirs: str, path: str = "", fmt: str = No
         po, pt = F.parse(fmt, ours), F.parse(fmt, theirs)
     except F.FormatError:
         txt, ok = _textual(base, ours, theirs)
+        if _allow_template and fmt == "yaml" and not base_missing and T.is_templated(base + ours + theirs) \
+                and not (ok and txt is not None and T.balance(txt) is not None):
+            # Helm / Go-template / Jinja YAML. git's line merge is already right most of the time
+            # here, so it stays primary; the structural merge only gets a say where git conflicts,
+            # and only if its result is exactly explained by the line facts (see template.py).
+            res = T.merge_templated(base, ours, theirs, merge_texts)
+            if res is not None and res[1]:
+                return Output(res[0], True, fmt, "template")
         return Output(txt if txt is not None else ours, ok, fmt, "textual")
     if same(po, pt):                             # formatting-only difference on one or both sides
         return Output(ours, True, fmt, "fast")
@@ -189,7 +199,7 @@ def merge_texts(base: str, ours: str, theirs: str, path: str = "", fmt: str = No
     text = None
     for fresh in (False, True):
         try:
-            cand = F.render(fmt, ph_data, ours, fresh=fresh)
+            cand = F.render(fmt, ph_data, ours, fresh=fresh, donor_text=theirs)
             back = F.parse(fmt, cand)
         except Exception:
             continue

@@ -36,8 +36,16 @@ _NAMES = {
 }
 
 
+_TEMPLATE_SUFFIXES = (".j2", ".jinja", ".jinja2", ".tmpl", ".template", ".gotmpl")
+
+
 def detect(path: str, text: str = "") -> str:
     base = os.path.basename(path).lower()
+    for suf in _TEMPLATE_SUFFIXES:                    # values.yaml.j2 -> yaml
+        if base.endswith(suf) and len(base) > len(suf):
+            path = path[: -len(suf)]
+            base = base[: -len(suf)]
+            break
     if base in _NAMES:
         return _NAMES[base]
     if base.startswith(".env"):
@@ -292,7 +300,54 @@ def _yaml_rt(text: str):
     return y
 
 
-def _sync(target, merged):
+def _donor(v, donors):
+    """The round-trip node (with its original quoting / flow style / comments) for a value that
+    is being inserted from the other side, if there is one."""
+    if donors:
+        from .core_types import canon
+        try:
+            return donors.get(canon(v), v)
+        except Exception:
+            return v
+    return v
+
+
+def _anchored(n, seen=None):
+    """True if the subtree defines an anchor or is reached twice (an alias): such nodes cannot
+    be moved into another document without creating duplicate/dangling anchors."""
+    seen = set() if seen is None else seen
+    if getattr(getattr(n, "anchor", None), "value", None):
+        return True
+    if isinstance(n, (MutableMapping, MutableSequence)):
+        if id(n) in seen:
+            return True
+        seen.add(id(n))
+        kids = n.values() if isinstance(n, MutableMapping) else n
+        return any(_anchored(v, seen) for v in kids)
+    return False
+
+
+def _collect_donors(doc):
+    from .core_types import canon
+    out = {}
+
+    def walk(n):
+        if not _anchored(n):
+            try:
+                out.setdefault(canon(_plain(n)), n)
+            except Exception:
+                pass
+        if isinstance(n, MutableMapping):
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, MutableSequence):
+            for v in n:
+                walk(v)
+    walk(doc)
+    return out
+
+
+def _sync(target, merged, donors=None):
     """Make `target` (a ruamel/tomlkit container from the ours document) equal `merged`,
     touching as little as possible so comments and layout stay."""
     if isinstance(merged, dict) and isinstance(target, MutableMapping):
@@ -304,23 +359,24 @@ def _sync(target, merged):
                 cur = target[k]
                 if isinstance(v, (dict, list)) and isinstance(cur, (MutableMapping, MutableSequence)) \
                         and isinstance(v, dict) == isinstance(cur, MutableMapping):
-                    _sync(cur, v)
+                    _sync(cur, v, donors)
                 elif not _same(cur, v):
-                    target[k] = v
+                    target[k] = _donor(v, donors)
             else:
                 ins = getattr(target, "insert", None)
+                v = _donor(v, donors)
                 if ins is not None and hasattr(target, "ca"):
                     ins(min(i, len(target)), k, v)
                 else:
                     target[k] = v
         return
     if isinstance(merged, list) and isinstance(target, MutableSequence):
-        _sync_seq(target, merged)
+        _sync_seq(target, merged, donors)
         return
     raise TypeError("cannot sync")
 
 
-def _sync_seq(target, merged):
+def _sync_seq(target, merged, donors=None):
     """Minimal in-place edits: keep matching items (and their comments), patch
     structurally-similar replaced items, delete/insert the rest."""
     from difflib import SequenceMatcher
@@ -337,17 +393,17 @@ def _sync_seq(target, merged):
             for k in range(i2 - i1):
                 o, v = old[i1 + k], merged[j1 + k]
                 if isinstance(v, dict) and isinstance(o, MutableMapping) and _key_overlap(o, v) >= 0.5:
-                    _sync(o, v)
+                    _sync(o, v, donors)
                 elif isinstance(v, list) and isinstance(o, MutableSequence):
-                    _sync(o, v)
+                    _sync(o, v, donors)
                 else:
-                    target[i1 + k] = v
+                    target[i1 + k] = _donor(v, donors)
             if pair_ok:
                 continue
         for _ in range(i2 - i1):
             del target[i1]
         for k, v in enumerate(merged[j1:j2]):
-            target.insert(i1 + k, v)
+            target.insert(i1 + k, _donor(v, donors))
 
 
 def _key_overlap(a, b):
@@ -360,7 +416,7 @@ def _same(a, b):
     return same(_plain(a), _plain(b))
 
 
-def render(fmt: str, merged, ours_text: str, fresh: bool = False) -> str:
+def render(fmt: str, merged, ours_text: str, fresh: bool = False, donor_text: str = None) -> str:
     """Merged data -> text. Preferred: patch the ours document; `fresh=True` re-emits from scratch."""
     if fmt == "json":
         style = _json_style(ours_text)
@@ -373,7 +429,7 @@ def render(fmt: str, merged, ours_text: str, fresh: bool = False) -> str:
                     pass
         return dump_json(merged, style)
     if fmt == "yaml":
-        return _render_yaml(merged, ours_text, fresh)
+        return _render_yaml(merged, ours_text, fresh, donor_text)
     if fmt == "toml":
         return _render_toml(merged, ours_text, fresh)
     if fmt in ("ini", "properties", "env"):
@@ -386,15 +442,23 @@ def render(fmt: str, merged, ours_text: str, fresh: bool = False) -> str:
     raise FormatError(f"cannot render {fmt}")
 
 
-def _render_yaml(merged, ours_text, fresh):
+def _render_yaml(merged, ours_text, fresh, donor_text=None):
     y = _yaml_rt(ours_text)
     buf = io.StringIO()
+    donors = None
+    if donor_text and not fresh:
+        try:
+            donors = {}
+            for d in y.load_all(donor_text):
+                donors.update({k: v for k, v in _collect_donors(d).items() if k not in donors})
+        except Exception:
+            donors = None
     if isinstance(merged, MultiDoc):
         docs_out = list(merged)
         if not fresh:
             try:
                 ours_docs = list(y.load_all(ours_text))
-                docs_out = _patch_docs(ours_docs, list(merged))
+                docs_out = _patch_docs(ours_docs, list(merged), donors)
             except Exception:
                 docs_out = list(merged)
         y.explicit_start = True
@@ -406,14 +470,14 @@ def _render_yaml(merged, ours_text, fresh):
     doc = y.load(ours_text)
     if isinstance(merged, dict) and isinstance(doc, MutableMapping) or \
             isinstance(merged, list) and isinstance(doc, MutableSequence):
-        _sync(doc, merged)
+        _sync(doc, merged, donors)
         y.dump(doc, buf)
     else:
         y.dump(merged, buf)
     return buf.getvalue()
 
 
-def _patch_docs(ours_docs, merged_docs):
+def _patch_docs(ours_docs, merged_docs, donors=None):
     out = []
     pool = list(ours_docs)
     for m in merged_docs:
@@ -432,10 +496,10 @@ def _patch_docs(ours_docs, merged_docs):
         if best is not None:
             pool.remove(best)
             if not _same(best, m) and isinstance(m, dict) and isinstance(best, MutableMapping):
-                _sync(best, m)
+                _sync(best, m, donors)
             out.append(best)
         else:
-            out.append(m)
+            out.append(_donor(m, donors))
     return out
 
 

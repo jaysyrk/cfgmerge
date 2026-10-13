@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+- Templated YAML (Helm / Go templates / Jinja, `*.yaml.j2`): template directive lines act as anchors,
+  YAML between them is merged structurally with `{{ }}` expressions hidden behind placeholders.
+  git stays primary (it is right ~93% of the time here); the structural result is accepted only when it is
+  exactly the ideal line-fact merge and `if`/`end` blocks balance. 299 real cases: 92.6% -> 93.3%, 0 wrong.
+- Items inserted from *theirs* now keep their own quoting, flow style and comments (donor nodes);
+  anchored/aliased subtrees are never moved between documents.
+- Benchmark: templated-file scorer, results notes split out of the generated tables.
+
 ## 0.2.0
 - JSONC: JSON with comments and trailing commas is merged structurally and comments are preserved
   (span-based patcher, fuzz-tested). `.jsonc`, `.json5`, `.eslintrc`, `.babelrc` recognised.
