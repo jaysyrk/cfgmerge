@@ -83,9 +83,12 @@ def parse(fmt: str, text: str):
 def _parse_json(text):
     try:
         return json.loads(text, object_pairs_hook=_no_dupes)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as strict:
         from . import jsonc            # comments / trailing commas (tsconfig, eslintrc, VS Code)
-        return jsonc.loads(text)
+        try:
+            return jsonc.loads(text)
+        except jsonc.JsoncError:
+            raise strict               # the strict parser's message has the real line/column
 
 
 def _no_dupes(pairs):

@@ -1,2 +1,2 @@
 """cfgmerge: universal, schema-free, semantic three-way merge for config files."""
-__version__ = "0.3.0"
+__version__ = "0.4.0"

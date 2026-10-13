@@ -17,6 +17,7 @@ SKIP_NAMES = ("lock", "package-lock", "yarn.lock", "pnpm-lock", "poetry.lock", "
               "go.sum", ".min.", "-lock.")
 MAX_BYTES = 200_000
 SUPPORTED = {"json", "yaml", "toml", "ini", "properties", "env", "xml"}
+TEMPLATE_SUFFIXES = (".tpl", ".j2", ".jinja", ".jinja2", ".tmpl", ".gotmpl", ".template")
 
 
 def git(repo, *args, input=None):
@@ -44,7 +45,7 @@ class CatFile:
         self.p.wait()
 
 
-def mine_repo(repo_dir, out_path, per_repo_cap=500, max_merges=6000):
+def mine_repo(repo_dir, out_path, per_repo_cap=500, max_merges=6000, templates=False):
     name = os.path.basename(repo_dir)
     head = git(repo_dir, "rev-list", "--merges", f"--max-count={max_merges}", "HEAD").stdout.split()
     cf = CatFile(repo_dir)
@@ -66,7 +67,10 @@ def mine_repo(repo_dir, out_path, per_repo_cap=500, max_merges=6000):
                 if any(s in base_name for s in SKIP_NAMES):
                     continue
                 fmt = F.detect(f, "")
-                if fmt in SUPPORTED:
+                if templates:               # template files that are NOT plain-YAML config
+                    if base_name.endswith(TEMPLATE_SUFFIXES):
+                        cands.append((f, fmt))
+                elif fmt in SUPPORTED:
                     cands.append((f, fmt))
             if not cands:
                 continue
@@ -109,13 +113,14 @@ def main(argv=None):
     ap.add_argument("--out", default="data/cases")
     ap.add_argument("--cap", type=int, default=500)
     ap.add_argument("-j", type=int, default=6)
+    ap.add_argument("--templates", action="store_true", help="mine *.tpl/*.j2/*.tmpl files instead")
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     jobs = []
     for d in sorted(os.listdir(a.repos)):
         p = os.path.join(a.repos, d)
         if os.path.isdir(os.path.join(p, ".git")):
-            jobs.append((p, os.path.join(a.out, d + ".jsonl"), a.cap))
+            jobs.append((p, os.path.join(a.out, d + ".jsonl"), a.cap, 6000, a.templates))
     with ProcessPoolExecutor(a.j) as ex:
         for name, n in ex.map(_job, jobs):
             print(f"{n:5d} cases  {name}", flush=True)

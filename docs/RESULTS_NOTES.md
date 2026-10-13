@@ -38,3 +38,23 @@ number; the later tables are the same repos after fixing what they exposed, so t
    deviation from a reference fact-algebra merge; neither proves a merge is right for a running system.
 5. *Rewrites.* When both sides rewrite most of a file in largely the same places, cfgmerge defers to
    plain textual merge rather than stitching two rewrites together (cost: ~0.1 pt of auto-resolution).
+
+## Non-YAML templates (`*.tpl`, `*.tmpl`, `*.gotmpl`, `*.j2`)
+
+282 real merge cases from 10 repos (Helm `_helpers.tpl` / `_pod.tpl`, Traefik Go templates, ...):
+
+```
+git merge-file   exact=258 reference=2 wrong=0 broken=0 conflict=22   auto-ok=92.2%
+cfgmerge         exact=258 reference=2 wrong=0 broken=0 conflict=22   auto-ok=92.2%
+```
+**No gain, no harm.** The 22 conflicts are genuine overlapping edits. The tempting shortcut, a relaxed line
+merge (adjacent edits independent, concurrent inserts unioned), resolved 4 of the 13 dev-set conflicts and was
+*wrong in 2 of those 4*: precisely why the structural layer only ever acts behind the line-fact post-condition
+(see `cfgmerge/template.py`) and why nothing passed it here.
+
+## Pre-commit hooks and the Action
+
+Verified end to end rather than assumed: the three hooks were installed with the real `pre-commit` tool from a
+local checkout (check fails on a broken file with the right line; post-checkout registers the driver;
+pre-merge-commit audit runs and passes a clean merge), and the Action ran on GitHub's runners both on a clean
+PR (green) and on a deliberately broken one (red, with inline annotations on the exact files).

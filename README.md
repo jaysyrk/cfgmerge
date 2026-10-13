@@ -32,6 +32,49 @@ cfgmerge merge B O T --policy .cfgmerge.json --auto-affinity  # auto-apply only 
 Add `--committed` to write `.gitattributes` instead (team-wide), and set
 `git config merge.cfgmerge.driver "cfgmerge git-driver %O %A %B %L %P"` once per clone.
 
+## pre-commit
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/jaysyrk/cfgmerge
+    rev: v0.4.0
+    hooks:
+      - id: cfgmerge-check            # config parses, no leftover conflict markers
+      - id: cfgmerge-install-driver   # keeps the merge driver registered in every clone
+      - id: cfgmerge-audit-merge      # before a merge commit: nothing silently lost or broken
+```
+```bash
+pre-commit install --hook-type pre-commit --hook-type pre-merge-commit \
+                   --hook-type post-checkout --hook-type post-merge
+```
+`cfgmerge-install-driver` exists because git's merge-driver config is *not versioned*: without it
+each teammate would have to run `cfgmerge install` by hand.
+
+## GitHub Action
+
+```yaml
+# .github/workflows/config.yml
+on: pull_request
+jobs:
+  cfgmerge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: jaysyrk/cfgmerge@v0.4.0
+        with:
+          mode: all           # check | diff | verify-merge | all
+          paths: ""           # optional globs, e.g. "deploy/** *.yaml"
+```
+- **check**: files that fail to parse or contain leftover conflict markers fail the job, with inline annotations.
+- **diff**: a formatting-blind semantic diff of the changed config files in the job summary.
+- **verify-merge**: GitHub tests your PR against the merge ref, which is built by *textual* merge;
+  this audits that merge for config content both histories agree on that went missing, or files that stopped parsing.
+
+Also usable from any CI: `cfgmerge ci --mode all --base origin/main --head HEAD`, or
+`cfgmerge check FILE...`, `cfgmerge audit [REV]`, `cfgmerge summary BASE HEAD`.
+
 ## How it works
 | Step | What |
 |---|---|
@@ -70,6 +113,9 @@ Full tables are in [`docs/RESULTS.md`](docs/RESULTS.md); protocol, affinity eval
   so it stays primary. A template-aware layer (directive lines as anchors, YAML merged between them,
   accepted only if the result is exactly the ideal line-fact merge with balanced `if`/`end`) resolves
   a few extra conflicts. Measured gain is small: +2 of 22 git conflicts, 0 regressions, on 299 real cases.
+- Non-YAML template files (`_helpers.tpl`, `*.tmpl`, `*.gotmpl`): git's merge is already right ~92% of the
+  time and no *safe* structural gain was found (a relaxed line merge fixed 4 of 13 conflicts but got 2 of those 4
+  wrong), so these are left to git. 282 real cases, identical to git.
 - When both sides rewrite most of a file in the same places, cfgmerge defers to a plain textual merge
   (a tree merge of two independent rewrites isn't trustworthy).
 - YAML anchors/aliases are expanded for the merge; the result is verified but anchors you edit

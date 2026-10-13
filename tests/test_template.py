@@ -93,3 +93,17 @@ def test_j2_suffix_detected_as_yaml():
     from cfgmerge import formats as F
     assert F.detect("config/values.yaml.j2") == "yaml"
     assert F.detect("templates/_helpers.tpl") == "text"
+
+
+def test_tpl_helpers_stay_on_git_result_when_git_is_clean():
+    base = '{{- define "a" -}}\nfoo\n{{- end }}\n\n{{- define "b" -}}\nbar\n{{- end }}\n'
+    ours = base.replace("foo", "foo2")
+    theirs = base.replace("bar", "bar2")
+    o = merge_texts(base, ours, theirs, "templates/_helpers.tpl")
+    assert o.clean and o.strategy == "textual" and "foo2" in o.text and "bar2" in o.text
+
+
+def test_tpl_true_conflict_is_not_guessed():
+    base = '{{- define "a" -}}\nfoo\n{{- end }}\n'
+    o = merge_texts(base, base.replace("foo", "x"), base.replace("foo", "y"), "_helpers.tpl")
+    assert not o.clean and "<<<<<<<" in o.text
