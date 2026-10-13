@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+build/
+dist/
+# benchmark data is large, third-party, and reproducible: keep only the scripts
+data/*
+!data/clone.sh
+!data/clone_test.sh
+!data/clone_test.txt
